@@ -10,35 +10,6 @@ exports.setEncodingImpl = function (s) {
   };
 };
 
-exports.readChunkImpl = function (Left) {
-  return function (Right) {
-    return function (chunk) {
-      if (chunk instanceof Buffer) {
-        return Right(chunk);
-      } else if (typeof chunk === "string") {
-        return Left(chunk);
-      } else {
-        throw new Error(
-          "Node.Stream.readChunkImpl: Unrecognised " +
-          "chunk type; expected String or Buffer, got: " +
-          chunk);
-      }
-    };
-  };
-};
-
-exports.onDataEitherImpl = function (readChunk) {
-  return function (r) {
-    return function (f) {
-      return function () {
-        r.on("data", function (data) {
-          f(readChunk(data))();
-        });
-      };
-    };
-  };
-};
-
 exports.onEnd = function (s) {
   return function (f) {
     return function () {
@@ -81,6 +52,10 @@ exports.onClose = function (s) {
   };
 };
 
+exports.onDataImpl = function (stream, callback) {
+  stream.on("data", callback);
+};
+
 exports.resume = function (s) {
   return function () {
     s.resume();
@@ -121,23 +96,13 @@ exports.unpipeAll = function (r) {
   };
 };
 
-exports.readImpl = function (readChunk) {
-  return function (Nothing) {
-    return function (Just) {
-      return function (r) {
-        return function (s) {
-          return function () {
-            var v = r.read(s);
-            if (v === null) {
-              return Nothing;
-            } else {
-              return Just(readChunk(v));
-            }
-          };
-        };
-      };
-    };
-  };
+exports.readImpl = function (Nothing, Just, stream, size) {
+  var v = r.read(s);
+  if (v === null) {
+    return Nothing;
+  } else {
+    return Just(v);
+  }
 };
 
 exports.write = function (w) {

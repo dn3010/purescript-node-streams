@@ -7,9 +7,8 @@ module Node.Stream
   , Write()
   , Writable()
   , Duplex()
+  , Chunk
   , onData
-  , onDataString
-  , onDataEither
   , setEncoding
   , onReadable
   , onEnd
@@ -23,8 +22,6 @@ module Node.Stream
   , unpipe
   , unpipeAll
   , read
-  , readString
-  , readEither
   , write
   , writeString
   , cork
@@ -36,11 +33,12 @@ module Node.Stream
 
 import Prelude
 
-import Effect (Effect)
-import Effect.Exception (throw, Error())
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..), fromMaybe)
-import Node.Buffer (Buffer())
+import Effect (Effect)
+import Effect.Exception (throw, Error)
+import Effect.Uncurried (EffectFn1, EffectFn2, EffectFn4, mkEffectFn1, runEffectFn2, runEffectFn4)
+import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
 import Node.Encoding (Encoding)
 
@@ -71,100 +69,35 @@ foreign import undefined :: forall a. a
 
 foreign import data Chunk :: Type
 
-foreign import readChunkImpl
-  :: (forall l r. l -> Either l r)
-  -> (forall l r. r -> Either l r)
-  -> Chunk
-  -> Either String Buffer
-
-readChunk :: Chunk -> Either String Buffer
-readChunk = readChunkImpl Left Right
-
--- | Listen for `data` events, returning data in a Buffer. Note that this will fail
--- | if `setEncoding` has been called on the stream.
 onData
   :: forall w
    . Readable w
-  -> (Buffer -> Effect Unit)
+  -> (Chunk -> Effect Unit)
   -> Effect Unit
-onData r cb =
-  onDataEither r (cb <=< fromEither)
-  where
-  fromEither x =
-    case x of
-      Left _  ->
-        throw "Stream encoding should not be set"
-      Right buf ->
-        pure buf
+onData r cb = runEffectFn2 onDataImpl r (mkEffectFn1 cb)
+
+foreign import onDataImpl
+  :: ∀ r
+   . EffectFn2
+       (Readable r)
+       (EffectFn1 Chunk Unit)
+       Unit
 
 read
-  :: forall w
-   . Readable w
-   -> Maybe Int
-   -> Effect (Maybe Buffer)
-read r size = do
-  v <- readEither r size
-  case v of
-    Nothing        -> pure Nothing
-    Just (Left _)  -> throw "Stream encoding should not be set"
-    Just (Right b) -> pure (Just b)
-
-readString
-  :: forall w
+  :: ∀ w
    . Readable w
   -> Maybe Int
-  -> Encoding
-  -> Effect (Maybe String)
-readString r size enc = do
-  v <- readEither r size
-  case v of
-       Nothing          -> pure Nothing
-       Just (Left _)    -> throw "Stream encoding should not be set"
-       Just (Right buf) -> Just <$> Buffer.toString enc buf
-
-readEither
-  :: forall w
-   . Readable w
-  -> Maybe Int
-  -> Effect (Maybe (Either String Buffer))
-readEither r size = readImpl readChunk Nothing Just r (fromMaybe undefined size)
+  -> Effect (Maybe Chunk)
+read r size = runEffectFn4 readImpl Nothing Just r (fromMaybe undefined size)
 
 foreign import readImpl
-  :: forall r
-   . (Chunk -> Either String Buffer)
-  -> (forall a. Maybe a)
-  -> (forall a. a -> Maybe a)
-  -> Readable r
-  -> Int
-  -> Effect (Maybe (Either String Buffer))
-
--- | Listen for `data` events, returning data in a String, which will be
--- | decoded using the given encoding. Note that this will fail if `setEncoding`
--- | has been called on the stream.
-onDataString
-  :: forall w
-   . Readable w
-  -> Encoding
-  -> (String -> Effect Unit)
-  -> Effect Unit
-onDataString r enc cb = onData r (cb <=< Buffer.toString enc)
-
--- | Listen for `data` events, returning data in an `Either String Buffer`. This
--- | function is provided for the (hopefully rare) case that `setEncoding` has
--- | been called on the stream.
-onDataEither
-  :: forall r
-   . Readable r
-  -> (Either String Buffer -> Effect Unit)
-  -> Effect Unit
-onDataEither r cb = onDataEitherImpl readChunk r cb
-
-foreign import onDataEitherImpl
-  :: forall r
-   . (Chunk -> Either String Buffer)
-  -> Readable r
-  -> (Either String Buffer -> Effect Unit)
-  -> Effect Unit
+  :: ∀ r
+   . EffectFn4
+        (∀ a. Maybe a)
+        (∀ a. a -> Maybe a)
+        (Readable r)
+        Int
+        (Maybe Chunk)
 
 foreign import setEncodingImpl
   :: forall w
@@ -175,9 +108,6 @@ foreign import setEncodingImpl
 -- | Set the encoding used to read chunks as strings from the stream. This
 -- | function may be useful when you are passing a readable stream to some other
 -- | JavaScript library, which already expects an encoding to be set.
--- |
--- | Where possible, you should try to use `onDataString` instead of this
--- | function.
 setEncoding
   :: forall w
    . Readable w
